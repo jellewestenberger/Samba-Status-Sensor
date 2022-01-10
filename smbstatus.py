@@ -1,11 +1,22 @@
 #! /usr/bin/env python3
-
+import sys
 import os 
 import paho.mqtt.client as mqtt
 import datetime
 import time
 import sshcredentials
+import logging
+import logging.handlers
+import json
+logging.basicConfig(filename="/var/log/sambareport",level=logging.DEBUG, format='%(asctime)s %(levelname)s: %(message)s')
+logging.info("checking samba status")
 
+def error_handler(type, value, tb):
+    logging.exception("Uncaught Exception: {0}".format(str(value)))
+sys.excepthook = error_handler
+
+
+# --------Parse smbstatus--------------
 response = os.popen('ssh -i /home/pi/.ssh/id_rsa %s@%s "/usr/local/samba/bin/smbstatus"'%(sshcredentials.sshUser,sshcredentials.sshHost)).read()
 
 lines = response.split('-----\n')
@@ -82,4 +93,89 @@ for f in  files:
     fname = l[6]
     timest = time.mktime(datetime.datetime.strptime(l[7].replace("  "," "),"%a %b %d %H:%M:%S %Y").timetuple())
     filestruct[pid]['filelist'].append(fname)
-    filestruct[pid]['timelist'].append(int(timest))    
+    filestruct[pid]['timelist'].append(int(timest))   
+
+for id in filestruct:
+    # filestruct[id]['identity']=iden[id] 
+    for k in iden[id]:
+        filestruct[id][k]=iden[id][k]
+    filestruct[id]['nr_files']=len(filestruct[id]['filelist'])
+
+#---------MQTT----------------------
+mqttclient = mqtt.Client()
+mqttclient.username_pw_set(username=sshcredentials.mqttuser,password=sshcredentials.mqttpass)
+# Topics
+discoveryTopicPrefix = 'homeassistant/sensor/samba/'
+topicPrefix = 'home/nodes/samba/'
+
+def on_mqtt_connect(mqttclient,obj, flags, rc):
+    logging.debug("Connected to MQTT server")
+
+def on_mqtt_disconnect(mqttclienct,userdata,rc):
+    logging.debug("Disconnected from MQTT server")     
+
+def on_mqtt_message(mqttclient,obj,msg):
+    top = msg.topic.split(discoveryTopicPrefix)
+    if len(top)>1:
+        name = top[1].split("/config")[0]
+        if not name in filestruct: #delete config if client does not exist anymore:
+            logging.warning("%s does not exist anymore. Deleting from home assistant.."%name)
+            mqttclient.publish(msg.topic,"{}")
+    
+mqttclient.on_connect = on_mqtt_connect
+mqttclient.on_disconnect = on_mqtt_disconnect
+mqttclient.on_message = on_mqtt_message
+
+def publishDiscovery(session): #publish config payload for MQTT Discovery in HA
+    sessionID = session['PID']
+    discoveryTopic=discoveryTopicPrefix +"%s/config" % sessionID
+    payload={}
+    payload['name']='Samba Session '+ sessionID
+    payload['uniq_id'] = 'SambaSession_%s'%sessionID
+    payload['state_topic'] = "%s%s/state"%(topicPrefix,sessionID)
+    payload['unit_of_meas'] = 'files'
+    payload['icon'] = 'mdi:file-multiple'
+    payload['json_attributes_topic'] = "%s%s/attr"%(topicPrefix,sessionID)
+    # payload['dev'] = {
+    #             'identifiers' : ['vpnClient{}'.format(session['Name'])],
+    #             'manufacturer' : 'WireGuard',
+    #             'name' : 'VPN-Client-{}'.format(session['Name']),
+    #             'model' : 'VPN Client',
+    #             'sw_version': "not applicable"            
+    #         }
+    logging.debug("Publishing Config for %s"%sessionID)
+    mqttclient.publish(discoveryTopic,json.dumps(payload),0,retain=True)
+
+def publishState(session):
+    sessionID = session['PID']
+    stateTopic = "%s%s/state"%(topicPrefix,sessionID)
+    attrTopic ="%s%s/attr"%(topicPrefix,sessionID)
+    state = str(session['nr_files'])
+    attributes = {}
+    attributes['files']=session['filelist']
+    attributes['PID'] = session['PID']
+    attributes['username'] = session['Username']
+    attributes['group'] = session['Group']
+    attributes['machine'] = session['Machine']
+    attributes=json.dumps(attributes)
+    mqttclient.publish(stateTopic,state)
+    mqttclient.publish(attrTopic,attributes)
+    logging.debug("published state and attributes")
+    d=2
+
+mqttclient.connect(sshcredentials.mqtthost,sshcredentials.mqttport)
+mqttclient.subscribe(discoveryTopicPrefix+"#")
+for id in filestruct:
+    session = filestruct[id]
+    if session['nr_files'] > 0:
+        publishDiscovery(session)
+        publishState(session)
+mqttclient.loop_start()
+t0 = time.time()
+while True:
+    if time.time() - t0 > 5:
+        break
+
+mqttclient.loop_stop()
+mqttclient.disconnect()
+logging.info("finished")
