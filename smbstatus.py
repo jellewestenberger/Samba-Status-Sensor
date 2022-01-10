@@ -77,7 +77,7 @@ for id in iden:
     filestruct[id]=st
 
 
-for f in  files:
+for f in files:
     l= f.split('   ')
     i=0
     while i < len(l):
@@ -92,8 +92,9 @@ for f in  files:
     path = l[5]
     fname = l[6]
     timest = time.mktime(datetime.datetime.strptime(l[7].replace("  "," "),"%a %b %d %H:%M:%S %Y").timetuple())
-    filestruct[pid]['filelist'].append(fname)
-    filestruct[pid]['timelist'].append(int(timest))   
+    if not fname in filestruct[pid]['filelist']:
+        filestruct[pid]['filelist'].append(fname)
+        filestruct[pid]['timelist'].append(int(timest))   
 
 for id in filestruct:
     # filestruct[id]['identity']=iden[id] 
@@ -118,9 +119,9 @@ def on_mqtt_message(mqttclient,obj,msg):
     top = msg.topic.split(discoveryTopicPrefix)
     if len(top)>1:
         name = top[1].split("/config")[0]
-        if not name in filestruct: #delete config if client does not exist anymore:
+        if (not name in filestruct) and msg.payload != b'{}': #delete config if client does not exist anymore:
             logging.warning("%s does not exist anymore. Deleting from home assistant.."%name)
-            mqttclient.publish(msg.topic,"{}")
+            mqttclient.publish(msg.topic,"{}",retain=True)
     
 mqttclient.on_connect = on_mqtt_connect
 mqttclient.on_disconnect = on_mqtt_disconnect
