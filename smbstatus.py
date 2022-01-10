@@ -91,7 +91,11 @@ for f in files:
     oplock = l[3]
     path = l[5]
     fname = l[6]
-    timest = time.mktime(datetime.datetime.strptime(l[7].replace("  "," "),"%a %b %d %H:%M:%S %Y").timetuple())
+    for q in range(len(l)):
+        if ':' in l[q]: # find time
+            break
+    
+    timest = time.mktime(datetime.datetime.strptime(l[q].replace("  "," "),"%a %b %d %H:%M:%S %Y").timetuple())
     if not fname in filestruct[pid]['filelist']:
         filestruct[pid]['filelist'].append(fname)
         filestruct[pid]['timelist'].append(int(timest))   
@@ -119,10 +123,17 @@ def on_mqtt_message(mqttclient,obj,msg):
     top = msg.topic.split(discoveryTopicPrefix)
     if len(top)>1:
         name = top[1].split("/config")[0]
-        if (not name in filestruct) and msg.payload != b'{}': #delete config if client does not exist anymore:
-            logging.warning("%s does not exist anymore. Deleting from home assistant.."%name)
-            mqttclient.publish(msg.topic,"{}",retain=True)
-    
+        if msg.payload != b'{}':
+            delet=False
+            if name in filestruct:
+                if filestruct[name]['nr_files']==0:
+                    delet = False # set to False if you want to keep history in HA
+            elif (not name in filestruct)  : #delete config if session id does not exist anymore:
+                delet = True
+            if delet:
+                logging.warning("%s does not exist anymore. Deleting from home assistant.."%name)
+                mqttclient.publish(msg.topic,"{}",retain=True)
+        
 mqttclient.on_connect = on_mqtt_connect
 mqttclient.on_disconnect = on_mqtt_disconnect
 mqttclient.on_message = on_mqtt_message
