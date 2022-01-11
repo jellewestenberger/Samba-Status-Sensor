@@ -171,7 +171,8 @@ def publishDiscovery(session): #publish config payload for MQTT Discovery in HA
     discoveryTopic=discoveryTopicPrefix +"client_%s/config" % machine.replace(".","_").replace("(","").replace(")","")
     payload={}
     payload['name']='Samba Session '+ machine
-    payload['uniq_id'] = 'SambaSession_%s'%machine
+    payload['object_id'] = 'samba_'+machine
+    payload['uniq_id'] = 'samba_'+machine
     payload['state_topic'] = "%s%s/state"%(topicPrefix,machine)
     payload['unit_of_meas'] = 'files'
     payload['icon'] = 'mdi:file-multiple'
