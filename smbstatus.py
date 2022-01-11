@@ -8,7 +8,7 @@ import sshcredentials
 import logging
 import logging.handlers
 import json
-logging.basicConfig(filename="/var/log/sambareport",level=logging.DEBUG, format='%(asctime)s %(levelname)s: %(message)s')
+logging.basicConfig(filename="/var/log/sambareport",level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logging.info("checking samba status")
 
 def error_handler(type, value, tb):
@@ -17,8 +17,9 @@ sys.excepthook = error_handler
 
 
 # --------Parse smbstatus--------------
+logging.info("parsing smbstatus")
 response = os.popen('ssh -i /home/pi/.ssh/id_rsa %s@%s "/usr/local/samba/bin/smbstatus"'%(sshcredentials.sshUser,sshcredentials.sshHost)).read()
-
+logging.debug(response)
 lines = response.split('-----\n')
 a = lines[0].split('------\n')
 identityheader = a[0].split('\n')[2].split(" ")
@@ -57,7 +58,7 @@ for line in identities:
     st['PID'] = dat[0]
     st['Username'] = dat[1]
     st['Group'] = dat[2]
-    st['Machine'] = dat[3]
+    st['Machine'] = dat[3].replace(" ","")
     iden[dat[0]]=st
 
 files = lines[-1].split('\n')
@@ -74,7 +75,7 @@ for id in iden:
     st={}
     st['filelist']=[]
     st['timelist']=[]
-    filestruct[id]=st
+    filestruct[iden[id]['Machine']]=st
 
 
 for f in files:
@@ -96,16 +97,40 @@ for f in files:
             break
     
     timest = time.mktime(datetime.datetime.strptime(l[q].replace("  "," "),"%a %b %d %H:%M:%S %Y").timetuple())
-    if not fname in filestruct[pid]['filelist']:
-        filestruct[pid]['filelist'].append(fname)
-        filestruct[pid]['timelist'].append(int(timest))   
+    mach = iden[pid]['Machine']
+    if not fname in filestruct[mach]['filelist']:
+        filestruct[mach]['filelist'].append(fname)
+        filestruct[mach]['timelist'].append(int(timest))   
 
-for id in filestruct:
+for mach in filestruct:
     # filestruct[id]['identity']=iden[id] 
-    for k in iden[id]:
-        filestruct[id][k]=iden[id][k]
-    filestruct[id]['nr_files']=len(filestruct[id]['filelist'])
+    for id in iden:
+        if iden[id]['Machine'].replace(" ","") == mach:
+            for k in iden[id]:
+                if k in filestruct[mach]:
+                    if not iden[id][k] in filestruct[mach][k]:
+                        filestruct[mach][k].append(iden[id][k])
+                else:
+                    filestruct[mach][k]=[iden[id][k]]        
 
+    filestruct[mach]['nr_files']=len(filestruct[mach]['filelist'])
+    filestruct[mach]['nr_sessions']=len(filestruct[mach]['PID'])
+
+    # remove keys with empty lists and convert lists of size 1 to its content
+    skip=['nr_files','nr_sessions'] # skip keys that do not contain lists
+    j=0
+    while j < len(filestruct[mach]):
+        key = list(filestruct[mach].keys())[j]
+        if key in skip:
+            j+=1
+            continue
+        if len(filestruct[mach][key])==0:
+            del filestruct[mach][key]
+        elif len(filestruct[mach][key])==1:
+            filestruct[mach][key]=filestruct[mach][key][0]
+            j+=1
+        else:
+            j+=1
 #---------MQTT----------------------
 mqttclient = mqtt.Client()
 mqttclient.username_pw_set(username=sshcredentials.mqttuser,password=sshcredentials.mqttpass)
@@ -114,24 +139,27 @@ discoveryTopicPrefix = 'homeassistant/sensor/samba/'
 topicPrefix = 'home/nodes/samba/'
 
 def on_mqtt_connect(mqttclient,obj, flags, rc):
-    logging.debug("Connected to MQTT server")
+    logging.info("Connected to MQTT server")
 
 def on_mqtt_disconnect(mqttclienct,userdata,rc):
-    logging.debug("Disconnected from MQTT server")     
+    logging.info("Disconnected from MQTT server")     
 
 def on_mqtt_message(mqttclient,obj,msg):
     top = msg.topic.split(discoveryTopicPrefix)
+    logging.debug("Received message on topic: %s \n payload: %s"%(msg.topic,msg.payload))
     if len(top)>1:
-        name = top[1].split("/config")[0]
+        name = top[1].replace("client_","").replace("/config","")
         if msg.payload != b'{}':
-            delet=False
-            if name in filestruct:
-                if filestruct[name]['nr_files']==0:
-                    delet = False # set to False if you want to keep history in HA
-            elif (not name in filestruct)  : #delete config if session id does not exist anymore:
-                delet = True
+            delet=True
+            for name2 in filestruct:
+                if name2.replace(".","_").replace("(","").replace(")","") == name:
+                    delet=False
+                    break
+            # if (not name in filestruct)  : #delete config if session id does not exist anymore:
+            #     logging.info("Machine %s does not exist anymore"%name)
+            #     delet = True
             if delet:
-                logging.warning("%s does not exist anymore. Deleting from home assistant.."%name)
+                logging.warning("Deleting machine %s from home assistant.."%name)
                 mqttclient.publish(msg.topic,"{}",retain=True)
         
 mqttclient.on_connect = on_mqtt_connect
@@ -139,15 +167,15 @@ mqttclient.on_disconnect = on_mqtt_disconnect
 mqttclient.on_message = on_mqtt_message
 
 def publishDiscovery(session): #publish config payload for MQTT Discovery in HA
-    sessionID = session['PID']
-    discoveryTopic=discoveryTopicPrefix +"%s/config" % sessionID
+    machine = session['Machine']
+    discoveryTopic=discoveryTopicPrefix +"client_%s/config" % machine.replace(".","_").replace("(","").replace(")","")
     payload={}
-    payload['name']='Samba Session '+ sessionID
-    payload['uniq_id'] = 'SambaSession_%s'%sessionID
-    payload['state_topic'] = "%s%s/state"%(topicPrefix,sessionID)
+    payload['name']='Samba Session '+ machine
+    payload['uniq_id'] = 'SambaSession_%s'%machine
+    payload['state_topic'] = "%s%s/state"%(topicPrefix,machine)
     payload['unit_of_meas'] = 'files'
     payload['icon'] = 'mdi:file-multiple'
-    payload['json_attributes_topic'] = "%s%s/attr"%(topicPrefix,sessionID)
+    payload['json_attributes_topic'] = "%s%s/attr"%(topicPrefix,machine)
     # payload['dev'] = {
     #             'identifiers' : ['vpnClient{}'.format(session['Name'])],
     #             'manufacturer' : 'WireGuard',
@@ -155,20 +183,21 @@ def publishDiscovery(session): #publish config payload for MQTT Discovery in HA
     #             'model' : 'VPN Client',
     #             'sw_version': "not applicable"            
     #         }
-    logging.debug("Publishing Config for %s"%sessionID)
+    logging.debug("Publishing Config for %s"%machine)
     mqttclient.publish(discoveryTopic,json.dumps(payload),0,retain=True)
 
 def publishState(session):
-    sessionID = session['PID']
-    stateTopic = "%s%s/state"%(topicPrefix,sessionID)
-    attrTopic ="%s%s/attr"%(topicPrefix,sessionID)
+    machine = session['Machine']
+    stateTopic = "%s%s/state"%(topicPrefix,machine)
+    attrTopic ="%s%s/attr"%(topicPrefix,machine)
     state = str(session['nr_files'])
-    attributes = {}
-    attributes['files']=session['filelist']
-    attributes['PID'] = session['PID']
-    attributes['username'] = session['Username']
-    attributes['group'] = session['Group']
-    attributes['machine'] = session['Machine']
+    attributes = session
+    del attributes['nr_files']
+    # attributes['files']=session['filelist']
+    # attributes['PID'] = session['PID']
+    # attributes['username'] = session['Username']
+    # attributes['group'] = session['Group']
+    # attributes['machine'] = session['Machine']
     attributes=json.dumps(attributes)
     mqttclient.publish(stateTopic,state)
     mqttclient.publish(attrTopic,attributes)
@@ -177,13 +206,17 @@ def publishState(session):
 
 mqttclient.connect(sshcredentials.mqtthost,sshcredentials.mqttport)
 mqttclient.subscribe(discoveryTopicPrefix+"#")
-for id in filestruct:
-    session = filestruct[id]
-    if session['nr_files'] > 0:
-        publishDiscovery(session)
-        publishState(session)
+for mach in filestruct:
+    session = filestruct[mach]
+    
+    # if session['nr_files'] > 0:
+    logging.info("publishing session %s"%mach)
+    publishDiscovery(session)
+    publishState(session)
 mqttclient.loop_start()
 t0 = time.time()
+
+# Loop for a short time to be able to receive older retained configs for potential deletion
 while True:
     if time.time() - t0 > 5:
         break
