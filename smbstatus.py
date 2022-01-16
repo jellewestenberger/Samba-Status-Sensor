@@ -77,7 +77,9 @@ for id in iden:
     st['timelist']=[]
     filestruct[iden[id]['Machine']]=st
 
-
+if files[0]=='No locked files':
+    files =[]
+    
 for f in files:
     l= f.split('   ')
     i=0
