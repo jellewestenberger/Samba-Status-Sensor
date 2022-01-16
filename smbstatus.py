@@ -157,9 +157,6 @@ def on_mqtt_message(mqttclient,obj,msg):
                 if name2.replace(".","_").replace("(","").replace(")","") == name:
                     delet=False
                     break
-            # if (not name in filestruct)  : #delete config if session id does not exist anymore:
-            #     logging.info("Machine %s does not exist anymore"%name)
-            #     delet = True
             if delet:
                 logging.warning("Deleting machine %s from home assistant.."%name)
                 mqttclient.publish(msg.topic,"{}",retain=True)
@@ -179,13 +176,6 @@ def publishDiscovery(session): #publish config payload for MQTT Discovery in HA
     payload['unit_of_meas'] = 'files'
     payload['icon'] = 'mdi:file-multiple'
     payload['json_attributes_topic'] = "%s%s/attr"%(topicPrefix,machine)
-    # payload['dev'] = {
-    #             'identifiers' : ['vpnClient{}'.format(session['Name'])],
-    #             'manufacturer' : 'WireGuard',
-    #             'name' : 'VPN-Client-{}'.format(session['Name']),
-    #             'model' : 'VPN Client',
-    #             'sw_version': "not applicable"            
-    #         }
     logging.debug("Publishing Config for %s"%machine)
     mqttclient.publish(discoveryTopic,json.dumps(payload),0,retain=True)
 
@@ -196,11 +186,6 @@ def publishState(session):
     state = str(session['nr_files'])
     attributes = session
     del attributes['nr_files']
-    # attributes['files']=session['filelist']
-    # attributes['PID'] = session['PID']
-    # attributes['username'] = session['Username']
-    # attributes['group'] = session['Group']
-    # attributes['machine'] = session['Machine']
     attributes=json.dumps(attributes)
     mqttclient.publish(stateTopic,state)
     mqttclient.publish(attrTopic,attributes)
@@ -211,8 +196,6 @@ mqttclient.connect(sshcredentials.mqtthost,sshcredentials.mqttport)
 mqttclient.subscribe(discoveryTopicPrefix+"#")
 for mach in filestruct:
     session = filestruct[mach]
-    
-    # if session['nr_files'] > 0:
     logging.info("publishing session %s"%mach)
     publishDiscovery(session)
     publishState(session)
