@@ -18,7 +18,7 @@ sys.excepthook = error_handler
 
 # --------Parse smbstatus--------------
 logging.info("parsing smbstatus")
-response = os.popen('ssh -i /home/pi/.ssh/id_rsa %s@%s "/usr/local/samba/bin/smbstatus"'%(sshcredentials.sshUser,sshcredentials.sshHost)).read()
+response = os.popen('ssh -i /home/pi/.ssh/id_ed25519 %s@%s "/usr/local/samba/bin/smbstatus"'%(sshcredentials.sshUser,sshcredentials.sshHost)).read()
 logging.debug(response)
 lines = response.split('-----\n')
 a = lines[0].split('------\n')
@@ -141,6 +141,12 @@ discoveryTopicPrefix = 'homeassistant/sensor/samba/'
 topicPrefix = 'home/nodes/samba/'
 
 def on_mqtt_connect(mqttclient,obj, flags, rc):
+    if rc==0:
+        mqttclient.connected_flag=True #set flag
+        print("connected OK")
+    else:
+        print("Bad connection Returned code=",rc)
+        mqttclient.bad_connection_flag=True
     logging.info("Connected to MQTT server")
 
 def on_mqtt_disconnect(mqttclienct,userdata,rc):
@@ -170,7 +176,7 @@ def publishDiscovery(session): #publish config payload for MQTT Discovery in HA
     discoveryTopic=discoveryTopicPrefix +"client_%s/config" % machine.replace(".","_").replace("(","").replace(")","")
     payload={}
     payload['name']='Samba Session '+ machine
-    payload['object_id'] = 'samba_'+machine
+    payload['default_entity_id'] = 'samba_'+machine
     payload['uniq_id'] = 'samba_'+machine
     payload['state_topic'] = "%s%s/state"%(topicPrefix,machine)
     payload['unit_of_meas'] = 'files'
