@@ -58,7 +58,7 @@ for line in identities:
     st['PID'] = dat[0]
     st['Username'] = dat[1]
     st['Group'] = dat[2]
-    st['Machine'] = dat[3].replace(" ","")
+    st['Machine'] = dat[3].replace(" ","").replace("(","_").replace(")","").replace(".","_")
     iden[dat[0]]=st
 
 files = lines[-1].split('\n')
@@ -176,10 +176,10 @@ def publishDiscovery(session): #publish config payload for MQTT Discovery in HA
     discoveryTopic=discoveryTopicPrefix +"client_%s/config" % machine.replace(".","_").replace("(","").replace(")","")
     payload={}
     payload['name']='Samba Session '+ machine
-    payload['default_entity_id'] = 'samba_'+machine
-    payload['uniq_id'] = 'samba_'+machine
+    payload['object_id'] = 'samba_'+machine
+    payload['unique_id'] = 'samba_'+machine
     payload['state_topic'] = "%s%s/state"%(topicPrefix,machine)
-    payload['unit_of_meas'] = 'files'
+    payload['unit_of_measurement '] = 'files'
     payload['icon'] = 'mdi:file-multiple'
     payload['json_attributes_topic'] = "%s%s/attr"%(topicPrefix,machine)
     logging.debug("Publishing Config for %s"%machine)
